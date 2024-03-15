@@ -64,11 +64,13 @@ Updated text`),
 	}
 
 	cfg := config{
-		NoteTag:    "blog",
-		HugoDir:    "./testData/site",
-		ContentDir: "content",
-		Categories: true,
-		Tags:       true,
+		NoteTag:              "blog",
+		HugoDir:              "./testData/site",
+		ContentDir:           "content",
+		Categories:           true,
+		Tags:                 true,
+		TagLine:              1,
+		OmitNonNoteTagPrefix: false,
 	}
 	tf := "2006-01-01"
 
@@ -119,43 +121,56 @@ func TestScanTags(t *testing.T) {
 	tests := []struct {
 		name string
 		in   []byte
+		omit bool
 		exp  []string
 	}{
 		{
 			"empty",
 			[]byte(""),
+			false,
 			[]string{},
 		},
 		{
 			"one tag",
 			[]byte("#prefix/abc"),
+			false,
 			[]string{"Abc"},
 		},
 		{
 			"multi-word tag",
 			[]byte("#prefix/abc def#"),
+			false,
 			[]string{"Abc Def"},
 		},
 		{
 			"multiple tags",
 			[]byte("#prefix/abc #prefix/def abc#  #def"),
+			false,
 			[]string{"Abc", "Def Abc", "Def"},
 		},
 		{
 			"not hashes",
 			[]byte("1234"),
+			false,
 			[]string{},
 		},
 		{
 			"some hashes with some random text",
 			[]byte("#prefix/abc 123 #one 456"),
+			false,
 			[]string{"Abc", "One"},
+		},
+		{
+			"some hashes with some random text",
+			[]byte("#prefix/abc 123 #one 456"),
+			true,
+			[]string{"Abc"},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := scanTags(test.in, "prefix")
+			got := scanTags(test.in, "prefix", test.omit)
 			require.Equal(t, test.exp, got)
 		})
 	}

@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"os/signal"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,13 +25,15 @@ import (
 )
 
 type config struct {
-	Interval   time.Duration `default:"1s"`
-	HugoDir    string        `split_words:"true" default:"."`
-	ContentDir string        `split_words:"true" default:"content/blog"`
-	NoteTag    string        `split_words:"true" default:"blog"`
-	Categories bool          `default:"true"`
-	Tags       bool          `default:"false"`
-	Database   string
+	Interval             time.Duration `default:"1s"`
+	HugoDir              string        `split_words:"true" default:"."`
+	ContentDir           string        `split_words:"true" default:"content/blog"`
+	NoteTag              string        `split_words:"true" default:"blog"`
+	Categories           bool          `default:"true"`
+	Tags                 bool          `default:"false"`
+	TagLine              int           `default:"-1"`
+	OmitNonNoteTagPrefix bool          `default:"true"`
+	Database             string
 }
 
 type note struct {
@@ -222,23 +224,27 @@ func fileExists(path string) bool {
 }
 
 func copyFile(src, dst string) {
+	// TODO: Do we care about permissions? Probably not
+	srcdata, err := ioutil.ReadFile(src)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+	if fileExists(dst) {
+		dstdata, err := ioutil.ReadFile(src)
+		if err != nil {
+			log.Error(err)
+			return
+		}
+		if bytes.Equal(srcdata, dstdata) {
+			return
+		}
+	}
 	log.Infof("Copying %s to %s", src, dst)
-
-	// TODO: Do we care about permissions?
-	srcf, err := os.Open(src)
+	err = ioutil.WriteFile(dst, srcdata, 0644)
 	if err != nil {
-		log.Fatal(err)
+		log.Error(err)
 	}
-	dstf, err := os.Create(dst)
-	if err != nil {
-		log.Fatal(err)
-	}
-	_, err = io.Copy(dstf, srcf)
-	if err != nil {
-		log.Fatal(err)
-	}
-	srcf.Close()
-	dstf.Close()
 }
 
 func copyImagesToHugo(db *sql.DB, cfg *config, n *note, hugo_path string) {
@@ -272,6 +278,9 @@ func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan n
 	log.Debug("Starting UpdateHugo")
 	defer wg.Done()
 
+	hash_tagline := cfg.TagLine
+	current_tagline := hash_tagline
+
 	for {
 		select {
 		case n := <-notes:
@@ -285,27 +294,36 @@ func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan n
 			n.Date = time.Unix(int64(n.CreationTimestamp)+core_data_epoch_offset, 0).Format(timeFormat)
 
 			lines := bytes.Split(n.BodyRaw, []byte("\n"))
-			// If there is only a heading and tags continue on.
-			if len(lines) < 3 {
-				continue
+
+			if hash_tagline < 0 {
+				// Remove the empty lines from the end
+				for len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
+					lines = lines[0:len(lines)]
+				}
+
+				current_tagline = len(lines) + hash_tagline
+				if current_tagline < 0 || current_tagline >= len(lines) {
+					continue
+				}
 			}
 
-			// The second line should be the line with tags.
-			n.Hashtags = scanTags(lines[1], cfg.NoteTag)
+			n.Hashtags = scanTags(lines[current_tagline], cfg.NoteTag, cfg.OmitNonNoteTagPrefix)
 			for _, c := range n.Hashtags {
 				if strings.Contains(strings.ToLower(c), "draft") {
 					n.Draft = true
 				}
 			}
 
+			// Remove the tags
+			lines = slices.Delete(lines, current_tagline, current_tagline+1)
+
 			// The Bear hashtags will populate either categories or tags (or both) depending on these bools.
 			n.Categories = cfg.Categories
 			n.Tags = cfg.Tags
 
-			// First two lines are the title of the note and the tags.
 			target := strings.Replace(strings.ToLower(n.Title), " ", "-", -1)
-
-			n.Body = string(bytes.Join(lines[2:], []byte("\n")))
+			// Title is the first line
+			n.Body = string(bytes.Join(lines[1:], []byte("\n")))
 
 			post_dir := fmt.Sprintf("%s/%s/%s", cfg.HugoDir, cfg.ContentDir, target)
 			if err := os.MkdirAll(post_dir, os.ModePerm); err != nil {
@@ -370,7 +388,7 @@ func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan n
 	}
 }
 
-func scanTags(l []byte, tag string) []string {
+func scanTags(l []byte, tag string, omit_others bool) []string {
 	start := 0
 	end := 0
 	inHash := false
@@ -410,7 +428,11 @@ func scanTags(l []byte, tag string) []string {
 		case r == ' ' && peek == '#' && inHash:
 			inHash = false
 			multiWord = false
-			hashtags = append(hashtags, formatTag(l[start:end], tag))
+
+			if !omit_others || bytes.Equal(l[start:start+len(tag)],
+				[]byte(tag)) {
+				hashtags = append(hashtags, formatTag(l[start:end], tag))
+			}
 
 		// If this isn't a potential multi-word hash, then keep incrementing the end index.
 		case !multiWord:
@@ -421,7 +443,10 @@ func scanTags(l []byte, tag string) []string {
 	}
 
 	if inHash {
-		hashtags = append(hashtags, formatTag(l[start:end], tag))
+		if !omit_others || bytes.Equal(l[start:start+len(tag)],
+			[]byte(tag)) {
+			hashtags = append(hashtags, formatTag(l[start:end], tag))
+		}
 	}
 
 	return hashtags

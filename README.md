@@ -5,11 +5,23 @@ Bhugo is a simple tool written in Go that transforms [Bear](https://bear.app/) n
 Bhugo will monitor a directory of Bear notes based off of a configurable tag prefix. For example, if you prefix all your Bear notes as `#blog`  ( `#blog/finance,  #blog/life`  etc.), configure Bhugo to monitor the `blog` prefix. Bhugo will preserve any custom front matter that you add to your Hugo files.
 
 Bhugo does it’s best to stay out of your way, with only a few requirements for how you write your notes:
+
 - Write your notes in markdown compatibility mode.
-- The first line of your note is treated as the title and is used to create the Hugo files and insert the title into the Hugo front matter - a note titled `My Great Post` will generate a file called `my-great-post.md`.
-- The second line of your note is expected to be hashtags (and optionally other text), which will correlate to either Hugo categories or tags in the front matter.
-- You can insert images into your Bear notes and they will be formatted to match the configurable environment variable designating the image directory in your Hugo blog - so save your images in your Hugo site as you would normally and then insert them directly into your Bear note.
-- The `draft` tag has special meaning and will specifically mark the post as a draft in the Hugo front matter, for example `#blog/draft`.
+
+- The first line of your note is treated as the title and is used to create
+  the Hugo files and insert the title into the Hugo front matter - a note
+  titled `My Great Post` will generate a file called `my-great-post.md`.
+
+- The Nth line of your note is expected to be hashtags (and optionally
+  other text), which will correlate to either Hugo categories or tags in
+  the front matter; this is configurable as
+
+- You can insert images into your Bear notes and they will be copied to the
+  content directory as part of the blog post bundles. No manual interaction
+  required.
+
+- The `draft` tag has special meaning and will specifically mark the post
+  as a draft in the Hugo front matter, for example `#blog/draft`.
 
 - - - -
 ## **Warning**
@@ -18,7 +30,7 @@ Bhugo will **blow away** the body of an existing file in the `CONTENT_DIR` direc
 - - - -
 
 ## Installation
-- [Install Go 1.13+](https://golang.org/dl/)
+- [Install Go 1.18+](https://golang.org/dl/)
 - `go get github.com/fingon/bhugo`
 
 ## Configuration
@@ -33,6 +45,7 @@ NOTE_TAG=blog
 INTERVAL=1s
 CATEGORIES=true
 TAGS=false
+TAG_LINE=-1  # end of entry
 DATABASE="/Users/<username>/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite"
 ```
 
