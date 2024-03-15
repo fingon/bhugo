@@ -1,4 +1,4 @@
-module github.com/Zach-Johnson/bhugo
+module github.com/fingon/bhugo
 
 go 1.13
 
