@@ -18,7 +18,7 @@ Bhugo will **blow away** the body of an existing file in the `CONTENT_DIR` direc
 - - - -
 
 ## Installation
-- [Install Go 1.11+](https://golang.org/dl/)
+- [Install Go 1.13+](https://golang.org/dl/)
 - `go get github.com/fingon/bhugo`
 
 ## Configuration
