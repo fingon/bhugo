@@ -19,7 +19,7 @@ Bhugo will **blow away** the body of an existing file in the `CONTENT_DIR` direc
 
 ## Installation
 - [Install Go 1.11+](https://golang.org/dl/)
-- `go get github.com/Zach-Johnson/bhugo`
+- `go get github.com/fingon/bhugo`
 
 ## Configuration
 Create a `.bhugo` wherever you like - a good spot is in the root of your Hugo site.  You’ll need to configure this file with several values:
@@ -56,32 +56,6 @@ Valid values given by [time.Duration](https://golang.org/pkg/time/#ParseDuration
 `TAGS` is a boolean value indicating that Bhguo will treat Bear hashtags as Hugo tags in the front matter.
 
 - - - -
-
-**Example set up:**
-
-Configure a .`bhugo` file:
-
-![](../assets/imgs/bhugo-file.png?raw=true)
-
-Start up Bhugo from the same directory where your `.bhugo` file is:
-
-![](../assets/imgs/bhugo-start.png?raw=true)
-
-
-Make some changes to an existing note, with hashtags prefixed with the `NOTE_TAG` value from the `.bhugo` file:
-
-![](../assets/imgs/bhugo-changes.png?raw=true)
-
-
-You should see the change reflected in your Hugo content file:
-
-![](../assets/imgs/bhugo-content.png?raw=true)
-
-
-And a message from Bhugo telling you it made an update:
-
-![](../assets/imgs/bhugo-updated.png?raw=true)
-
 
 ## Contributing
 Pull requests, feature requests, bug reports, and general feedback are all more than welcome.
