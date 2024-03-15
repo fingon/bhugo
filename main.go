@@ -80,13 +80,13 @@ func main() {
 
 	var cfg struct {
 		Interval   time.Duration `default:"1s"`
-		HugoDir    string        `split_words:"true" required:"true"`
+		HugoDir    string        `split_words:"true" default:"."`
 		ContentDir string        `split_words:"true" default:"content/blog"`
 		ImageDir   string        `split_words:"true" default:"/img/posts"`
 		NoteTag    string        `split_words:"true" default:"blog"`
-		Database   string        `required:"true"`
 		Categories bool          `default:"true"`
 		Tags       bool          `default:"false"`
+		Database   string
 	}
 
 	err = envconfig.Process("", &cfg)
@@ -100,7 +100,16 @@ func main() {
 
 	timeFormat := "2006-01-02T15:04:05-07:00"
 
-	db, err := sql.Connect("sqlite3", cfg.Database)
+	database := cfg.Database
+	if len(database) == 0 {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatal(err)
+		}
+		database = fmt.Sprintf("%s/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite", home)
+	}
+
+	db, err := sql.Connect("sqlite3", database)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -25,20 +25,20 @@ Bhugo will **blow away** the body of an existing file in the `CONTENT_DIR` direc
 Create a `.bhugo` wherever you like - a good spot is in the root of your Hugo site.  You’ll need to configure this file with several values:
 
 ```
-# Required - substitute your username and Hugo site directory.
-DATABASE="/Users/<username>/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite"
-HUGO_DIR=/Users/<username>/my-awesome-blog
-
 # Optional - defaults listed below
+HUGO_DIR=.
 CONTENT_DIR=content/blog
 IMAGE_DIR=/img/posts
 NOTE_TAG=blog
 INTERVAL=1s
 CATEGORIES=true
 TAGS=false
+DATABASE="/Users/<username>/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite"
 ```
 
-Substitute your `username` in the `DATABASE` variable - this is where Bear stores it’s data. Bhugo is `read-only` on this database but if it makes you feel better, back up that file.
+Substitute your `username` in the `DATABASE` variable if you want to
+customize it - this is where Bear stores it’s data. Bhugo is `read-only` on
+this database but if it makes you feel better, back up that file.
 
 `HUGO_DIR` is the root directory of your Hugo blog.
 
