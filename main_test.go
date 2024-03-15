@@ -63,11 +63,14 @@ Updated text`),
 		},
 	}
 
+	cfg := config{
+		NoteTag:    "blog",
+		HugoDir:    "./testData/site",
+		ContentDir: "content",
+		Categories: true,
+		Tags:       true,
+	}
 	tf := "2006-01-01"
-	tag := "blog"
-	hugoDir := "./testData/site"
-	contentDir := "content"
-	imageDir := "/"
 
 	tmpl, err := template.New("Note Template").Parse(templateRaw)
 	require.NoError(t, err)
@@ -81,7 +84,7 @@ Updated text`),
 			notes := make(chan note, 1)
 			notes <- test.in
 
-			dir := fmt.Sprintf("%s/%s/%s", hugoDir, contentDir, test.file)
+			dir := fmt.Sprintf("%s/%s/%s", cfg.HugoDir, cfg.ContentDir, test.file)
 
 			// Keep a copy of the original file if it exists.
 			orig, _ := ioutil.ReadFile(dir)
@@ -98,7 +101,8 @@ Updated text`),
 
 			wg := sync.WaitGroup{}
 			wg.Add(1)
-			updateHugo(&wg, done, notes, tf, tag, hugoDir, contentDir, imageDir, tmpl, true, true)
+
+			updateHugo(nil, &wg, done, notes, tf, &cfg, tmpl)
 
 			f, err := ioutil.ReadFile(dir)
 			require.NoError(t, err)
@@ -153,47 +157,6 @@ func TestScanTags(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			got := scanTags(test.in, "prefix")
 			require.Equal(t, test.exp, got)
-		})
-	}
-}
-
-func TestParseImages(t *testing.T) {
-	tests := []struct {
-		name string
-		in   [][]byte
-		exp  [][]byte
-	}{
-		{"empty", nil, nil},
-		{
-			"basic",
-			[][]byte{
-				[]byte("[image:7BD34BA7-1D41-4634-B42B-0C6D20B88E33-34561-0000B3447A4CA4D0/img.jpg]"),
-				[]byte("*Caption*"),
-			},
-			[][]byte{
-				[]byte("![Caption](/img/posts/img.jpg)"),
-				[]byte("*Caption*"),
-			},
-		},
-		{
-			"no catpion",
-			[][]byte{
-				[]byte("[image:7BD34BA7-1D41-4634-B42B-0C6D20B88E33-34561-0000B3447A4CA4D0/img.jpg]"),
-				[]byte(""),
-			},
-			[][]byte{
-				[]byte("![](/img/posts/img.jpg)"),
-				[]byte(""),
-			},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			parseImages(test.in, "/img/posts")
-			for i, l := range test.exp {
-				require.Equal(t, string(l), string(test.in[i]))
-			}
 		})
 	}
 }

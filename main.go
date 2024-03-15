@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/signal"
+	"path"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,8 +24,20 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+type config struct {
+	Interval   time.Duration `default:"1s"`
+	HugoDir    string        `split_words:"true" default:"."`
+	ContentDir string        `split_words:"true" default:"content/blog"`
+	NoteTag    string        `split_words:"true" default:"blog"`
+	Categories bool          `default:"true"`
+	Tags       bool          `default:"false"`
+	Database   string
+}
+
 type note struct {
 	// These come from SQLite
+	PK                    int     `db:"Z_PK"`
+	ID                    string  `db:"ZUNIQUEIDENTIFIER"`
 	Title                 string  `db:"ZTITLE"`
 	BodyRaw               []byte  `db:"ZTEXT"`
 	CreationTimestamp     float64 `db:"ZCREATIONDATE"`
@@ -83,20 +97,15 @@ func main() {
 		log.Fatal(err)
 	}
 
-	var cfg struct {
-		Interval   time.Duration `default:"1s"`
-		HugoDir    string        `split_words:"true" default:"."`
-		ContentDir string        `split_words:"true" default:"content/blog"`
-		ImageDir   string        `split_words:"true" default:"/img/posts"`
-		NoteTag    string        `split_words:"true" default:"blog"`
-		Categories bool          `default:"true"`
-		Tags       bool          `default:"false"`
-		Database   string
-	}
-
 	once := flag.Bool("once", false, "Run conversion only once (useful when scripting)")
 
+	debug := flag.Bool("debug", false, "Run with debug level logging")
 	flag.Parse()
+	if *debug {
+		log.SetLevel(log.DebugLevel)
+	}
+
+	var cfg config
 
 	err = envconfig.Process("", &cfg)
 	if err != nil {
@@ -109,19 +118,19 @@ func main() {
 
 	timeFormat := "2006-01-02T15:04:05-07:00"
 
-	database := cfg.Database
-	if len(database) == 0 {
+	if len(cfg.Database) == 0 {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			log.Fatal(err)
 		}
-		database = fmt.Sprintf("%s/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite", home)
+		cfg.Database = fmt.Sprintf("%s/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite", home)
 	}
 
-	db, err := sql.Connect("sqlite3", database)
+	db, err := sql.Connect("sqlite3", cfg.Database)
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer db.Close()
 
 	tmpl, err := template.New("Note Template").Parse(templateRaw)
 	if err != nil {
@@ -137,7 +146,7 @@ func main() {
 	wg := sync.WaitGroup{}
 
 	wg.Add(1)
-	go updateHugo(&wg, done, notes, timeFormat, cfg.NoteTag, cfg.HugoDir, cfg.ContentDir, cfg.ImageDir, tmpl, cfg.Categories, cfg.Tags)
+	go updateHugo(db, &wg, done, notes, timeFormat, &cfg, tmpl)
 
 	if *once {
 		cache := make(map[string][]byte)
@@ -162,7 +171,7 @@ func main() {
 
 func checkBearOnce(db *sql.DB, notesChan chan<- note, noteTag string, cache map[string][]byte) {
 	notes := make([]note, 0, len(cache))
-	q := fmt.Sprintf("SELECT ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE FROM ZSFNOTE WHERE ZTEXT LIKE '%%#%s%%'", noteTag)
+	q := fmt.Sprintf("SELECT Z_PK, ZUNIQUEIDENTIFIER, ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE FROM ZSFNOTE WHERE ZTEXT LIKE '%%#%s%%'", noteTag)
 	if err := db.Select(&notes, q); err != nil {
 		log.Error(err)
 		return
@@ -201,7 +210,65 @@ func checkBear(wg *sync.WaitGroup, done <-chan bool, db *sql.DB, interval time.D
 	}
 }
 
-func updateHugo(wg *sync.WaitGroup, done <-chan bool, notes <-chan note, timeFormat, noteTag, hugoDir, contentDir, imageDir string, tmpl *template.Template, categories, tags bool) {
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+		log.Fatal(err)
+	}
+	return true
+}
+
+func copyFile(src, dst string) {
+	log.Infof("Copying %s to %s", src, dst)
+
+	// TODO: Do we care about permissions?
+	srcf, err := os.Open(src)
+	if err != nil {
+		log.Fatal(err)
+	}
+	dstf, err := os.Create(dst)
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = io.Copy(dstf, srcf)
+	if err != nil {
+		log.Fatal(err)
+	}
+	srcf.Close()
+	dstf.Close()
+}
+
+func copyImagesToHugo(db *sql.DB, cfg *config, n *note, hugo_path string) {
+	if db == nil {
+		// unit test
+		return
+	}
+	bear_dir := path.Dir(path.Dir(cfg.Database))
+	bear_images_dir := fmt.Sprintf("%s/Application Data/Local Files/Note Images", bear_dir)
+	rows, err := db.Query("SELECT ZUNIQUEIDENTIFIER,ZFILENAME FROM ZSFNOTEFILE WHERE ZNOTE=?", n.PK)
+	if err != nil {
+		log.Panic(err)
+		return
+	}
+	for rows.Next() {
+		var id, filename string
+		err = rows.Scan(&id, &filename)
+		if err != nil {
+			log.Panic(err)
+			return
+
+		}
+		bear_path := fmt.Sprintf("%s/%s/%s", bear_images_dir, id, filename)
+		copyFile(bear_path, fmt.Sprintf("%s/%s", hugo_path, filename))
+	}
+}
+
+func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan note,
+	timeFormat string,
+	cfg *config, tmpl *template.Template) {
 	log.Debug("Starting UpdateHugo")
 	defer wg.Done()
 
@@ -224,7 +291,7 @@ func updateHugo(wg *sync.WaitGroup, done <-chan bool, notes <-chan note, timeFor
 			}
 
 			// The second line should be the line with tags.
-			n.Hashtags = scanTags(lines[1], noteTag)
+			n.Hashtags = scanTags(lines[1], cfg.NoteTag)
 			for _, c := range n.Hashtags {
 				if strings.Contains(strings.ToLower(c), "draft") {
 					n.Draft = true
@@ -232,17 +299,22 @@ func updateHugo(wg *sync.WaitGroup, done <-chan bool, notes <-chan note, timeFor
 			}
 
 			// The Bear hashtags will populate either categories or tags (or both) depending on these bools.
-			n.Categories = categories
-			n.Tags = tags
-
-			// Format images for Hugo.
-			parseImages(lines, imageDir)
+			n.Categories = cfg.Categories
+			n.Tags = cfg.Tags
 
 			// First two lines are the title of the note and the tags.
-			n.Body = string(bytes.Join(lines[2:], []byte("\n")))
 			target := strings.Replace(strings.ToLower(n.Title), " ", "-", -1)
 
-			fp := fmt.Sprintf("%s/%s/%s.md", hugoDir, contentDir, target)
+			n.Body = string(bytes.Join(lines[2:], []byte("\n")))
+
+			post_dir := fmt.Sprintf("%s/%s/%s", cfg.HugoDir, cfg.ContentDir, target)
+			if err := os.MkdirAll(post_dir, os.ModePerm); err != nil {
+				log.Error(err)
+				continue
+			}
+
+			copyImagesToHugo(db, cfg, &n, post_dir)
+			fp := fmt.Sprintf("%s/index.md", post_dir)
 			cf, err := ioutil.ReadFile(fp)
 			existed := err == nil
 			if err != nil && !os.IsNotExist(err) {
@@ -353,37 +425,6 @@ func scanTags(l []byte, tag string) []string {
 	}
 
 	return hashtags
-}
-
-func parseImages(lines [][]byte, imgDir string) {
-	caption := false
-
-	// Go through all the lines and check for images.
-	// Replace the Bear image format with the Hugo format and the captions.
-	for i, l := range lines {
-		switch {
-		case caption:
-			caption = false
-
-			// Assume captions are italics or bold.
-			if bytes.HasPrefix(l, []byte("*")) {
-				lines[i-1] = bytes.Replace(lines[i-1], []byte("--caption--"), bytes.Trim(l, "*"), -1)
-			} else {
-				lines[i-1] = bytes.Replace(lines[i-1], []byte("--caption--"), []byte(""), -1)
-			}
-		case bytes.Contains(l, []byte("[image:")):
-			// Next line is possibly the image caption.
-			caption = true
-			split := bytes.Split(l, []byte("/"))
-			if len(split) != 2 {
-				log.Warn("Parsing image line failed")
-				continue
-			}
-
-			imgName := string(bytes.TrimSuffix(bytes.TrimSpace(split[1]), []byte("]")))
-			lines[i] = []byte(fmt.Sprintf("![--caption--](%s/%s)", imgDir, imgName))
-		}
-	}
 }
 
 func customFrontMatter(f []byte) []string {
