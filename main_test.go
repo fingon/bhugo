@@ -21,7 +21,7 @@ func TestUpdateHugo(t *testing.T) {
 	}{
 		{
 			"basic",
-			"note-title.md",
+			"note-title/index.md",
 			note{
 				Title: "Note Title",
 				BodyRaw: []byte(`# Note Title
@@ -42,7 +42,7 @@ Body text`),
 		// Should preserve custom front matter of an existing note.
 		{
 			"existing note",
-			"existing.md",
+			"existing/index.md",
 			note{
 				Title: "Existing",
 				BodyRaw: []byte(`# Existing
