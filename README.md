@@ -38,15 +38,15 @@ Create a `.bhugo` wherever you like - a good spot is in the root of your Hugo si
 
 ```
 # Optional - defaults listed below
-HUGO_DIR=.
-CONTENT_DIR=content/blog
-IMAGE_DIR=/img/posts
-NOTE_TAG=blog
-INTERVAL=1s
 CATEGORIES=true
-TAGS=false
-TAG_LINE=-1  # end of entry
+CONTENT_DIR=content/blog
 DATABASE="/Users/<username>/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite"
+HUGO_DIR=.
+INTERVAL=1s
+NOTE_TAG=blog
+TAGS=false
+TAG_LINE=-1
+TIME_FORMAT=2006-01-02T15:04:05-07:00
 ```
 
 Substitute your `username` in the `DATABASE` variable if you want to
@@ -57,8 +57,6 @@ this database but if it makes you feel better, back up that file.
 
 `CONTENT_DIR` is the output directory relative to the `HUGO_DIR` that Bhugo will save posts to.
 
-`IMAGE_DIR` is the image directory relative to `HUGO_DIR/static`.
-
 `NOTE_TAG` is the tag prefix in Bear that Bhugo will monitor.
 
 `INTERVAL` is how often Bhugo will check for changes to Bear notes.
@@ -66,7 +64,14 @@ Valid values given by [time.Duration](https://golang.org/pkg/time/#ParseDuration
 
 `CATEGORIES` is a boolean value indicating that Bhguo will treat Bear hashtags as Hugo categories in the front matter.
 
-`TAGS` is a boolean value indicating that Bhguo will treat Bear hashtags as Hugo tags in the front matter.
+`TAGS` is a boolean value indicating that Bhguo will treat Bear hashtags as
+Hugo tags in the front matter.
+
+`TAG_LINE` can be used with either 1 (second line), or -1 (last line), or
+anything else you want where the hashtags are placed in the
+entries. Dynamic finding of tags is not supported. 
+
+`TIME_FORMAT` can be used to customize time format used when dumping entries.
 
 - - - -
 

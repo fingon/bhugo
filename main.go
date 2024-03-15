@@ -25,14 +25,16 @@ import (
 )
 
 type config struct {
-	Interval             time.Duration `default:"1s"`
-	HugoDir              string        `split_words:"true" default:"."`
-	ContentDir           string        `split_words:"true" default:"content/blog"`
-	NoteTag              string        `split_words:"true" default:"blog"`
-	Categories           bool          `default:"true"`
-	Tags                 bool          `default:"false"`
-	TagLine              int           `default:"-1"`
-	OmitNonNoteTagPrefix bool          `default:"true"`
+	Interval   time.Duration `default:"1s"`
+	HugoDir    string        `split_words:"true" default:"."`
+	ContentDir string        `split_words:"true" default:"content/blog"`
+	NoteTag    string        `split_words:"true" default:"blog"`
+	Categories bool          `default:"true"`
+	Tags       bool          `default:"false"`
+	TimeFormat string        `default:"2006-01-02T15:04:05-07:00"`
+
+	TagLine              int  `default:"-1"`
+	OmitNonNoteTagPrefix bool `default:"true"`
 	Database             string
 }
 
@@ -118,8 +120,6 @@ func main() {
 	bhugoFrontMatter["categories"] = cfg.Categories
 	bhugoFrontMatter["tags"] = cfg.Tags
 
-	timeFormat := "2006-01-02T15:04:05-07:00"
-
 	if len(cfg.Database) == 0 {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -148,7 +148,7 @@ func main() {
 	wg := sync.WaitGroup{}
 
 	wg.Add(1)
-	go updateHugo(db, &wg, done, notes, timeFormat, &cfg, tmpl)
+	go updateHugo(db, &wg, done, notes, &cfg, tmpl)
 
 	if *once {
 		cache := make(map[string][]byte)
@@ -272,106 +272,110 @@ func copyImagesToHugo(db *sql.DB, cfg *config, n *note, hugo_path string) {
 	}
 }
 
-func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan note,
-	timeFormat string,
-	cfg *config, tmpl *template.Template) {
-	log.Debug("Starting UpdateHugo")
-	defer wg.Done()
+func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) {
 
 	hash_tagline := cfg.TagLine
 	current_tagline := hash_tagline
 
+	log.Debugf("Handling %s", n.Title)
+	// Replace smart quotes with regular quotes.
+	n.BodyRaw = bytes.Replace(n.BodyRaw, []byte("“"), []byte("\""), -1)
+	n.BodyRaw = bytes.Replace(n.BodyRaw, []byte("”"), []byte("\""), -1)
+	// Jan 1 2001
+	core_data_epoch_offset := int64(978307200)
+
+	n.Date = time.Unix(int64(n.CreationTimestamp)+core_data_epoch_offset, 0).Format(cfg.TimeFormat)
+
+	lines := bytes.Split(n.BodyRaw, []byte("\n"))
+
+	if hash_tagline < 0 {
+		// Remove the empty lines from the end
+		for len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
+			lines = lines[0:len(lines)]
+		}
+
+		current_tagline = len(lines) + hash_tagline
+		if current_tagline < 0 || current_tagline >= len(lines) {
+			return
+		}
+	}
+
+	n.Hashtags = scanTags(lines[current_tagline], cfg.NoteTag, cfg.OmitNonNoteTagPrefix)
+	for _, c := range n.Hashtags {
+		if strings.Contains(strings.ToLower(c), "draft") {
+			n.Draft = true
+		}
+	}
+
+	// Remove the tags
+	lines = slices.Delete(lines, current_tagline, current_tagline+1)
+
+	// The Bear hashtags will populate either categories or tags (or both) depending on these bools.
+	n.Categories = cfg.Categories
+	n.Tags = cfg.Tags
+
+	target := strings.Replace(strings.ToLower(n.Title), " ", "-", -1)
+	// Title is the first line
+	n.Body = string(bytes.Join(lines[1:], []byte("\n")))
+
+	post_dir := fmt.Sprintf("%s/%s/%s", cfg.HugoDir, cfg.ContentDir, target)
+	if err := os.MkdirAll(post_dir, os.ModePerm); err != nil {
+		log.Error(err)
+		return
+	}
+
+	copyImagesToHugo(db, cfg, n, post_dir)
+	fp := fmt.Sprintf("%s/index.md", post_dir)
+	cf, err := ioutil.ReadFile(fp)
+	existed := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		log.Error(err)
+		return
+	}
+	// If the file exists, check for any custom front matter to preserve it.
+	if len(cf) > 0 {
+		n.CustomFrontMatter = customFrontMatter(cf)
+	}
+
+	fp_temp := fmt.Sprintf("%s.tmp", fp)
+
+	f, err := os.Create(fp_temp)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+
+	if err := tmpl.Execute(f, n); err != nil {
+		log.Error(err)
+	}
+
+	if err := f.Close(); err != nil {
+		log.Error(err)
+	}
+	if existed {
+		cf, _ := ioutil.ReadFile(fp)
+		cf2, _ := ioutil.ReadFile(fp_temp)
+		if bytes.Equal(cf, cf2) {
+			log.Info("Files are same, skipping update")
+			os.Remove(fp_temp)
+			return
+		}
+		log.Info("Files differed, updating")
+	} else {
+		log.Info("Files did not exist, updating")
+	}
+	os.Rename(fp_temp, fp)
+
+}
+
+func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan note, cfg *config, tmpl *template.Template) {
+	log.Debug("Starting UpdateHugo")
+	defer wg.Done()
+
 	for {
 		select {
 		case n := <-notes:
-			log.Debugf("Handling %s", n.Title)
-			// Replace smart quotes with regular quotes.
-			n.BodyRaw = bytes.Replace(n.BodyRaw, []byte("“"), []byte("\""), -1)
-			n.BodyRaw = bytes.Replace(n.BodyRaw, []byte("”"), []byte("\""), -1)
-			// Jan 1 2001
-			core_data_epoch_offset := int64(978307200)
-
-			n.Date = time.Unix(int64(n.CreationTimestamp)+core_data_epoch_offset, 0).Format(timeFormat)
-
-			lines := bytes.Split(n.BodyRaw, []byte("\n"))
-
-			if hash_tagline < 0 {
-				// Remove the empty lines from the end
-				for len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
-					lines = lines[0:len(lines)]
-				}
-
-				current_tagline = len(lines) + hash_tagline
-				if current_tagline < 0 || current_tagline >= len(lines) {
-					continue
-				}
-			}
-
-			n.Hashtags = scanTags(lines[current_tagline], cfg.NoteTag, cfg.OmitNonNoteTagPrefix)
-			for _, c := range n.Hashtags {
-				if strings.Contains(strings.ToLower(c), "draft") {
-					n.Draft = true
-				}
-			}
-
-			// Remove the tags
-			lines = slices.Delete(lines, current_tagline, current_tagline+1)
-
-			// The Bear hashtags will populate either categories or tags (or both) depending on these bools.
-			n.Categories = cfg.Categories
-			n.Tags = cfg.Tags
-
-			target := strings.Replace(strings.ToLower(n.Title), " ", "-", -1)
-			// Title is the first line
-			n.Body = string(bytes.Join(lines[1:], []byte("\n")))
-
-			post_dir := fmt.Sprintf("%s/%s/%s", cfg.HugoDir, cfg.ContentDir, target)
-			if err := os.MkdirAll(post_dir, os.ModePerm); err != nil {
-				log.Error(err)
-				continue
-			}
-
-			copyImagesToHugo(db, cfg, &n, post_dir)
-			fp := fmt.Sprintf("%s/index.md", post_dir)
-			cf, err := ioutil.ReadFile(fp)
-			existed := err == nil
-			if err != nil && !os.IsNotExist(err) {
-				log.Error(err)
-				continue
-			}
-			// If the file exists, check for any custom front matter to preserve it.
-			if len(cf) > 0 {
-				n.CustomFrontMatter = customFrontMatter(cf)
-			}
-
-			fp_temp := fmt.Sprintf("%s.tmp", fp)
-
-			f, err := os.Create(fp_temp)
-			if err != nil {
-				log.Error(err)
-				continue
-			}
-
-			if err := tmpl.Execute(f, n); err != nil {
-				log.Error(err)
-			}
-
-			if err := f.Close(); err != nil {
-				log.Error(err)
-			}
-			if existed {
-				cf, _ := ioutil.ReadFile(fp)
-				cf2, _ := ioutil.ReadFile(fp_temp)
-				if bytes.Equal(cf, cf2) {
-					log.Info("Files are same, skipping update")
-					os.Remove(fp_temp)
-					continue
-				}
-				log.Info("Files differed, updating")
-			} else {
-				log.Info("Files did not exist, updating")
-			}
-			os.Rename(fp_temp, fp)
+			updateHugoNote(db, cfg, tmpl, &n)
 		default:
 			// we want to empty the notes channel and only
 			// then consider done; this facilitates easier
@@ -379,10 +383,12 @@ func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan n
 			// process all entries, there are bigger
 			// problems)
 			select {
+			case n := <-notes:
+				updateHugoNote(db, cfg, tmpl, &n)
+
 			case <-done:
 				log.Debug("Update Hugo exiting")
 				return
-			default:
 			}
 		}
 	}

@@ -71,8 +71,8 @@ Updated text`),
 		Tags:                 true,
 		TagLine:              1,
 		OmitNonNoteTagPrefix: false,
+		TimeFormat:           "2006-02-01",
 	}
-	tf := "2006-01-01"
 
 	tmpl, err := template.New("Note Template").Parse(templateRaw)
 	require.NoError(t, err)
@@ -104,7 +104,7 @@ Updated text`),
 			wg := sync.WaitGroup{}
 			wg.Add(1)
 
-			updateHugo(nil, &wg, done, notes, tf, &cfg, tmpl)
+			updateHugo(nil, &wg, done, notes, &cfg, tmpl)
 
 			f, err := ioutil.ReadFile(dir)
 			require.NoError(t, err)
