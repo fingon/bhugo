@@ -23,8 +23,14 @@ import (
 )
 
 type note struct {
-	Title             string `db:"ZTITLE"`
-	BodyRaw           []byte `db:"ZTEXT"`
+	// These come from SQLite
+	Title                 string  `db:"ZTITLE"`
+	BodyRaw               []byte  `db:"ZTEXT"`
+	CreationTimestamp     float64 `db:"ZCREATIONDATE"`
+	ModificationTimestamp float64 `db:"ZMODIFICATIONDATE"`
+
+	// These we parse/produce from ^
+	// TODO: What to do with ModificationTimestamp?
 	Body              string
 	Date              string
 	Hashtags          []string
@@ -37,7 +43,6 @@ type note struct {
 const templateRaw = `---
 title: "{{ .Title }}"
 date: {{ .Date }}
-
 {{- if .Categories }}
 categories: [
 {{- range $i, $c := .Hashtags -}}
@@ -46,7 +51,6 @@ categories: [
 {{- end -}}
 ]
 {{- end }}
-
 {{- if .Tags }}
 tags: [
 {{- range $i, $c := .Hashtags -}}
@@ -62,7 +66,7 @@ draft: {{ .Draft }}
 ---
 {{ .Body }}`
 
-// Front matter that Bhguo manages.
+// Front matter that Bhugo manages.
 var bhugoFrontMatter = map[string]bool{
 	"title":      true,
 	"date":       true,
@@ -133,7 +137,7 @@ func main() {
 	wg := sync.WaitGroup{}
 
 	wg.Add(1)
-	go updateHugo(&wg, done, notes, time.Now, timeFormat, cfg.NoteTag, cfg.HugoDir, cfg.ContentDir, cfg.ImageDir, tmpl, cfg.Categories, cfg.Tags)
+	go updateHugo(&wg, done, notes, timeFormat, cfg.NoteTag, cfg.HugoDir, cfg.ContentDir, cfg.ImageDir, tmpl, cfg.Categories, cfg.Tags)
 
 	if *once {
 		cache := make(map[string][]byte)
@@ -158,7 +162,7 @@ func main() {
 
 func checkBearOnce(db *sql.DB, notesChan chan<- note, noteTag string, cache map[string][]byte) {
 	notes := make([]note, 0, len(cache))
-	q := fmt.Sprintf("SELECT ZTITLE, ZTEXT FROM ZSFNOTE WHERE ZTEXT LIKE '%%#%s%%'", noteTag)
+	q := fmt.Sprintf("SELECT ZTITLE, ZTEXT, ZCREATIONDATE, ZMODIFICATIONDATE FROM ZSFNOTE WHERE ZTEXT LIKE '%%#%s%%'", noteTag)
 	if err := db.Select(&notes, q); err != nil {
 		log.Error(err)
 		return
@@ -197,18 +201,21 @@ func checkBear(wg *sync.WaitGroup, done <-chan bool, db *sql.DB, interval time.D
 	}
 }
 
-func updateHugo(wg *sync.WaitGroup, done <-chan bool, notes <-chan note, timeProvider func() time.Time, timeFormat, noteTag, hugoDir, contentDir, imageDir string, tmpl *template.Template, categories, tags bool) {
+func updateHugo(wg *sync.WaitGroup, done <-chan bool, notes <-chan note, timeFormat, noteTag, hugoDir, contentDir, imageDir string, tmpl *template.Template, categories, tags bool) {
 	log.Debug("Starting UpdateHugo")
 	defer wg.Done()
 
 	for {
 		select {
 		case n := <-notes:
+			log.Debugf("Handling %s", n.Title)
 			// Replace smart quotes with regular quotes.
 			n.BodyRaw = bytes.Replace(n.BodyRaw, []byte("“"), []byte("\""), -1)
 			n.BodyRaw = bytes.Replace(n.BodyRaw, []byte("”"), []byte("\""), -1)
+			// Jan 1 2001
+			core_data_epoch_offset := int64(978307200)
 
-			n.Date = timeProvider().Format(timeFormat)
+			n.Date = time.Unix(int64(n.CreationTimestamp)+core_data_epoch_offset, 0).Format(timeFormat)
 
 			lines := bytes.Split(n.BodyRaw, []byte("\n"))
 			// If there is only a heading and tags continue on.
@@ -263,17 +270,30 @@ func updateHugo(wg *sync.WaitGroup, done <-chan bool, notes <-chan note, timePro
 				log.Error(err)
 			}
 			if existed {
+				cf, _ := ioutil.ReadFile(fp)
 				cf2, _ := ioutil.ReadFile(fp_temp)
 				if bytes.Equal(cf, cf2) {
+					log.Info("Files are same, skipping update")
 					os.Remove(fp_temp)
 					continue
 				}
+				log.Info("Files differed, updating")
+			} else {
+				log.Info("Files did not exist, updating")
 			}
 			os.Rename(fp_temp, fp)
-
-		case <-done:
-			log.Info("Update Hugo exiting")
-			return
+		default:
+			// we want to empty the notes channel and only
+			// then consider done; this facilitates easier
+			// use of this elsewhere (if we really cannot
+			// process all entries, there are bigger
+			// problems)
+			select {
+			case <-done:
+				log.Debug("Update Hugo exiting")
+				return
+			default:
+			}
 		}
 	}
 }
@@ -380,7 +400,7 @@ func customFrontMatter(f []byte) []string {
 				return []string{}
 			}
 
-		// If this line is front matter that Bhguo controls, don't append it.
+		// If this line is front matter that Bhugo controls, don't append it.
 		case bhugoFrontMatter[string(kv[0])]:
 			continue
 		case bytes.Equal(l, []byte("---")):

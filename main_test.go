@@ -1,14 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"sync"
 	"testing"
 	"text/template"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +30,7 @@ func TestUpdateHugo(t *testing.T) {
 Body text`)},
 			[]byte(`---
 title: "Note Title"
-date: %time%
+date: 2001-01-01
 categories: ["Tag"]
 tags: ["Tag"]
 draft: false
@@ -53,7 +51,7 @@ Body text`),
 Updated text`)},
 			[]byte(`---
 title: "Existing"
-date: %time%
+date: 2001-01-01
 categories: ["Tag"]
 tags: ["Tag"]
 draft: false
@@ -65,24 +63,24 @@ Updated text`),
 		},
 	}
 
-	now := time.Now()
-	tp := func() time.Time {
-		return now
-	}
-	tf := "2006-01-02T15:04:05-07:00"
+	tf := "2006-01-01"
 	tag := "blog"
 	hugoDir := "./testData/site"
 	contentDir := "content"
 	imageDir := "/"
-
-	done := make(chan bool, 2)
-	notes := make(chan note, 1)
 
 	tmpl, err := template.New("Note Template").Parse(templateRaw)
 	require.NoError(t, err)
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			// channels are buffered so we can feed in stuff immediately
+			done := make(chan bool, 1)
+			done <- true
+
+			notes := make(chan note, 1)
+			notes <- test.in
+
 			dir := fmt.Sprintf("%s/%s/%s", hugoDir, contentDir, test.file)
 
 			// Keep a copy of the original file if it exists.
@@ -100,22 +98,15 @@ Updated text`),
 
 			wg := sync.WaitGroup{}
 			wg.Add(1)
-			go updateHugo(&wg, done, notes, tp, tf, tag, hugoDir, contentDir, imageDir, tmpl, true, true)
-			notes <- test.in
-
-			// Pause for a moment to make sure the note is processed before the done channel.
-			time.Sleep(time.Millisecond)
-
-			done <- true
-			wg.Wait()
+			updateHugo(&wg, done, notes, tf, tag, hugoDir, contentDir, imageDir, tmpl, true, true)
 
 			f, err := ioutil.ReadFile(dir)
 			require.NoError(t, err)
-
-			// Replace the date placeholder with the dummy timestamp.
-			exp := bytes.Replace(test.exp, []byte("%time%"), []byte(tp().Format(tf)), 1)
-
-			require.Equal(t, string(exp), string(f))
+			// TODO: If someone in US really wants to toy
+			// with this, the Core Data epoch might roll to
+			// 2000-12-31 as it is dumped tz-aware by
+			// default..
+			require.Equal(t, string(test.exp), string(f))
 		})
 	}
 }
