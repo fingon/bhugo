@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -89,6 +90,10 @@ func main() {
 		Database   string
 	}
 
+	once := flag.Bool("once", false, "Run conversion only once (useful when scripting)")
+
+	flag.Parse()
+
 	err = envconfig.Process("", &cfg)
 	if err != nil {
 		log.Fatal(err)
@@ -127,14 +132,19 @@ func main() {
 
 	wg := sync.WaitGroup{}
 
-	log.Infof("Watching Bear tag #%s for changes", cfg.NoteTag)
-
-	wg.Add(1)
-	go checkBear(&wg, done, db, cfg.Interval, notes, cfg.NoteTag)
-
 	wg.Add(1)
 	go updateHugo(&wg, done, notes, time.Now, timeFormat, cfg.NoteTag, cfg.HugoDir, cfg.ContentDir, cfg.ImageDir, tmpl, cfg.Categories, cfg.Tags)
 
+	if *once {
+		cache := make(map[string][]byte)
+		checkBearOnce(db, notes, cfg.NoteTag, cache)
+		done <- true
+	} else {
+		log.Infof("Watching Bear tag #%s for changes", cfg.NoteTag)
+
+		wg.Add(1)
+		go checkBear(&wg, done, db, cfg.Interval, notes, cfg.NoteTag)
+	}
 	go func() {
 		sig := <-sigs
 		log.Info(sig)
@@ -144,6 +154,27 @@ func main() {
 
 	wg.Wait()
 	log.Info("Bhugo Exiting")
+}
+
+func checkBearOnce(db *sql.DB, notesChan chan<- note, noteTag string, cache map[string][]byte) {
+	notes := make([]note, 0, len(cache))
+	q := fmt.Sprintf("SELECT ZTITLE, ZTEXT FROM ZSFNOTE WHERE ZTEXT LIKE '%%#%s%%'", noteTag)
+	if err := db.Select(&notes, q); err != nil {
+		log.Error(err)
+		return
+	}
+	for _, n := range notes {
+		c, ok := cache[n.Title]
+		if !ok {
+			log.Infof("Not cached note %s - possibly Hugo", n.Title)
+		} else if bytes.Equal(c, n.BodyRaw) {
+			continue
+		} else {
+			log.Infof("Differences detected in %s - updating Hugo", n.Title)
+		}
+		cache[n.Title] = n.BodyRaw
+		notesChan <- n
+	}
 }
 
 func checkBear(wg *sync.WaitGroup, done <-chan bool, db *sql.DB, interval time.Duration, notesChan chan<- note, noteTag string) {
@@ -157,27 +188,7 @@ func checkBear(wg *sync.WaitGroup, done <-chan bool, db *sql.DB, interval time.D
 	for {
 		select {
 		case <-tick:
-			notes := []note{}
-			q := fmt.Sprintf("SELECT ZTITLE, ZTEXT FROM ZSFNOTE WHERE ZTEXT LIKE '%%#%s%%'", noteTag)
-			if err := db.Select(&notes, q); err != nil {
-				log.Error(err)
-				continue
-			}
-
-			// Initialize cache for any new notes with changes.
-			for _, n := range notes {
-				c, ok := cache[n.Title]
-				if !ok {
-					cache[n.Title] = n.BodyRaw
-					continue
-				}
-
-				if !bytes.Equal(c, n.BodyRaw) {
-					log.Infof("Differences detected in %s - updating Hugo", n.Title)
-					cache[n.Title] = n.BodyRaw
-					notesChan <- n
-				}
-			}
+			checkBearOnce(db, notesChan, noteTag, cache)
 
 		case <-done:
 			log.Info("Check Bear exiting")
@@ -225,8 +236,8 @@ func updateHugo(wg *sync.WaitGroup, done <-chan bool, notes <-chan note, timePro
 			target := strings.Replace(strings.ToLower(n.Title), " ", "-", -1)
 
 			fp := fmt.Sprintf("%s/%s/%s.md", hugoDir, contentDir, target)
-
 			cf, err := ioutil.ReadFile(fp)
+			existed := err == nil
 			if err != nil && !os.IsNotExist(err) {
 				log.Error(err)
 				continue
@@ -236,7 +247,9 @@ func updateHugo(wg *sync.WaitGroup, done <-chan bool, notes <-chan note, timePro
 				n.CustomFrontMatter = customFrontMatter(cf)
 			}
 
-			f, err := os.Create(fp)
+			fp_temp := fmt.Sprintf("%s.tmp", fp)
+
+			f, err := os.Create(fp_temp)
 			if err != nil {
 				log.Error(err)
 				continue
@@ -249,6 +262,15 @@ func updateHugo(wg *sync.WaitGroup, done <-chan bool, notes <-chan note, timePro
 			if err := f.Close(); err != nil {
 				log.Error(err)
 			}
+			if existed {
+				cf2, _ := ioutil.ReadFile(fp_temp)
+				if bytes.Equal(cf, cf2) {
+					os.Remove(fp_temp)
+					continue
+				}
+			}
+			os.Rename(fp_temp, fp)
+
 		case <-done:
 			log.Info("Update Hugo exiting")
 			return
