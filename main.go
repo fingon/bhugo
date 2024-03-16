@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -93,18 +94,25 @@ var bhugoFrontMatter = map[string]bool{
 	"draft":      true,
 }
 
-func main() {
+func run(
+	_ context.Context,
+	args []string) error {
 	log.Info("Bhugo Initializing")
 
 	err := godotenv.Load(".bhugo")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	once := flag.Bool("once", false, "Run conversion only once (useful when scripting)")
+	flags := flag.NewFlagSet(args[0], flag.ExitOnError)
+	once := flags.Bool("once", false, "Run conversion only once (useful when scripting)")
 
-	debug := flag.Bool("debug", false, "Run with debug level logging")
-	flag.Parse()
+	debug := flags.Bool("debug", false, "Run with debug level logging")
+	err = flags.Parse(args[1:])
+	if err != nil {
+		return err
+	}
+
 	if *debug {
 		log.SetLevel(log.DebugLevel)
 	}
@@ -113,7 +121,7 @@ func main() {
 
 	err = envconfig.Process("", &cfg)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	// Override these defaults with the configuration values.
@@ -123,20 +131,20 @@ func main() {
 	if len(cfg.Database) == 0 {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
-		cfg.Database = fmt.Sprintf("%s/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite", home)
+		cfg.Database = home + "/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite"
 	}
 
 	db, err := sql.Connect("sqlite3", cfg.Database)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer db.Close()
 
 	tmpl, err := template.New("Note Template").Parse(templateRaw)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	sigs := make(chan os.Signal, 1)
@@ -169,6 +177,16 @@ func main() {
 
 	wg.Wait()
 	log.Info("Bhugo Exiting")
+	return nil
+}
+
+func main() {
+	ctx := context.Background()
+	err := run(ctx, os.Args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", err.Error())
+		os.Exit(1)
+	}
 }
 
 func checkBearOnce(db *sql.DB, notesChan chan<- note, noteTag string, cache map[string][]byte) {
@@ -180,11 +198,12 @@ func checkBearOnce(db *sql.DB, notesChan chan<- note, noteTag string, cache map[
 	}
 	for _, n := range notes {
 		c, ok := cache[n.Title]
-		if !ok {
+		switch {
+		case !ok:
 			log.Infof("Not cached note %s - possibly Hugo", n.Title)
-		} else if bytes.Equal(c, n.BodyRaw) {
+		case bytes.Equal(c, n.BodyRaw):
 			continue
-		} else {
+		default:
 			log.Infof("Differences detected in %s - updating Hugo", n.Title)
 		}
 		cache[n.Title] = n.BodyRaw
@@ -247,13 +266,13 @@ func copyFile(src, dst string) {
 	}
 }
 
-func copyImagesToHugo(db *sql.DB, cfg *config, n *note, hugo_path string) {
+func copyImagesToHugo(db *sql.DB, cfg *config, n *note, hugoPath string) {
 	if db == nil {
 		// unit test
 		return
 	}
-	bear_dir := path.Dir(path.Dir(cfg.Database))
-	bear_images_dir := fmt.Sprintf("%s/Application Data/Local Files/Note Images", bear_dir)
+	bearDir := path.Dir(path.Dir(cfg.Database))
+	bearImagesDir := bearDir + "/Application Data/Local Files/Note Images"
 	rows, err := db.Query("SELECT ZUNIQUEIDENTIFIER,ZFILENAME FROM ZSFNOTEFILE WHERE ZNOTE=?", n.PK)
 	if err != nil {
 		log.Panic(err)
@@ -265,30 +284,28 @@ func copyImagesToHugo(db *sql.DB, cfg *config, n *note, hugo_path string) {
 		if err != nil {
 			log.Panic(err)
 			return
-
 		}
-		bear_path := fmt.Sprintf("%s/%s/%s", bear_images_dir, id, filename)
-		copyFile(bear_path, fmt.Sprintf("%s/%s", hugo_path, filename))
+		bearPath := fmt.Sprintf("%s/%s/%s", bearImagesDir, id, filename)
+		copyFile(bearPath, fmt.Sprintf("%s/%s", hugoPath, filename))
 	}
 }
 
 func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) error {
-
-	hash_tagline := cfg.TagLine
-	current_tagline := hash_tagline
+	hashTagline := cfg.TagLine
+	currentTagline := hashTagline
 
 	log.Debugf("Handling %s", n.Title)
 	// Replace smart quotes with regular quotes.
-	n.BodyRaw = bytes.Replace(n.BodyRaw, []byte("“"), []byte("\""), -1)
-	n.BodyRaw = bytes.Replace(n.BodyRaw, []byte("”"), []byte("\""), -1)
+	n.BodyRaw = bytes.ReplaceAll(n.BodyRaw, []byte("“"), []byte("\""))
+	n.BodyRaw = bytes.ReplaceAll(n.BodyRaw, []byte("”"), []byte("\""))
 	// Jan 1 2001
-	core_data_epoch_offset := int64(978307200)
+	coreDataEpochOffset := int64(978307200)
 
-	n.Date = time.Unix(int64(n.CreationTimestamp)+core_data_epoch_offset, 0).Format(cfg.TimeFormat)
+	n.Date = time.Unix(int64(n.CreationTimestamp)+coreDataEpochOffset, 0).Format(cfg.TimeFormat)
 
 	lines := bytes.Split(n.BodyRaw, []byte("\n"))
 
-	if hash_tagline < 0 {
+	if hashTagline < 0 {
 		// Remove the empty lines from the end
 		last := len(lines) - 1
 		for last > 0 && len(lines[last]) == 0 {
@@ -296,13 +313,13 @@ func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) e
 		}
 		lines = lines[0 : last+1]
 
-		current_tagline = len(lines) + hash_tagline
-		if current_tagline < 0 || current_tagline >= len(lines) {
+		currentTagline = len(lines) + hashTagline
+		if currentTagline < 0 || currentTagline >= len(lines) {
 			return nil
 		}
 	}
 
-	n.Hashtags = scanTags(lines[current_tagline], cfg.NoteTag, cfg.OmitNonNoteTagPrefix)
+	n.Hashtags = scanTags(lines[currentTagline], cfg.NoteTag, cfg.OmitNonNoteTagPrefix)
 	for _, c := range n.Hashtags {
 		if strings.Contains(strings.ToLower(c), "draft") {
 			n.Draft = true
@@ -310,23 +327,23 @@ func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) e
 	}
 
 	// Remove the tags
-	lines = slices.Delete(lines, current_tagline, current_tagline+1)
+	lines = slices.Delete(lines, currentTagline, currentTagline+1)
 
 	// The Bear hashtags will populate either categories or tags (or both) depending on these bools.
 	n.Categories = cfg.Categories
 	n.Tags = cfg.Tags
 
-	target := strings.Replace(strings.ToLower(n.Title), " ", "-", -1)
+	target := strings.ReplaceAll(strings.ToLower(n.Title), " ", "-")
 	// Title is the first line
 	n.Body = string(bytes.Join(lines[1:], []byte("\n")))
 
-	post_dir := fmt.Sprintf("%s/%s/%s", cfg.HugoDir, cfg.ContentDir, target)
-	if err := os.MkdirAll(post_dir, os.ModePerm); err != nil {
+	postDir := fmt.Sprintf("%s/%s/%s", cfg.HugoDir, cfg.ContentDir, target)
+	if err := os.MkdirAll(postDir, os.ModePerm); err != nil {
 		return err
 	}
 
-	copyImagesToHugo(db, cfg, n, post_dir)
-	fp := fmt.Sprintf("%s/index.md", post_dir)
+	copyImagesToHugo(db, cfg, n, postDir)
+	fp := postDir + "/index.md"
 	cf, err := ioutil.ReadFile(fp)
 	existed := err == nil
 	if err != nil && !os.IsNotExist(err) {
@@ -337,9 +354,9 @@ func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) e
 		n.CustomFrontMatter = customFrontMatter(cf)
 	}
 
-	fp_temp := fmt.Sprintf("%s.tmp", fp)
+	fpTemp := fp + ".tmp"
 
-	f, err := os.Create(fp_temp)
+	f, err := os.Create(fpTemp)
 	if err != nil {
 		return err
 	}
@@ -353,17 +370,17 @@ func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) e
 	}
 	if existed {
 		cf, _ := ioutil.ReadFile(fp)
-		cf2, _ := ioutil.ReadFile(fp_temp)
+		cf2, _ := ioutil.ReadFile(fpTemp)
 		if bytes.Equal(cf, cf2) {
 			log.Info("Files are same, skipping update")
-			os.Remove(fp_temp)
+			os.Remove(fpTemp)
 			return nil
 		}
 		log.Info("Files differed, updating")
 	} else {
 		log.Info("Files did not exist, updating")
 	}
-	return os.Rename(fp_temp, fp)
+	return os.Rename(fpTemp, fp)
 }
 
 func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan note, cfg *config, tmpl *template.Template) {
@@ -397,7 +414,7 @@ func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan n
 	}
 }
 
-func scanTags(l []byte, tag string, omit_others bool) []string {
+func scanTags(l []byte, tag string, omitOthers bool) []string {
 	start := 0
 	end := 0
 	inHash := false
@@ -438,7 +455,7 @@ func scanTags(l []byte, tag string, omit_others bool) []string {
 			inHash = false
 			multiWord = false
 
-			if !omit_others || bytes.Equal(l[start:start+len(tag)],
+			if !omitOthers || bytes.Equal(l[start:start+len(tag)],
 				[]byte(tag)) {
 				hashtags = append(hashtags, formatTag(l[start:end], tag))
 			}
@@ -452,7 +469,7 @@ func scanTags(l []byte, tag string, omit_others bool) []string {
 	}
 
 	if inHash {
-		if !omit_others || bytes.Equal(l[start:start+len(tag)],
+		if !omitOthers || bytes.Equal(l[start:start+len(tag)],
 			[]byte(tag)) {
 			hashtags = append(hashtags, formatTag(l[start:end], tag))
 		}

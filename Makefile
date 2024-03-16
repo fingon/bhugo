@@ -14,7 +14,7 @@ all: build lint
 build: $(BINARY)
 
 lint:
-	golangci-lint run
+	golangci-lint run --fix
 
 $(BINARY): $(wildcard */*.go) $(wildcard *.go) $(GENERATED) Makefile
 	go test ./...
