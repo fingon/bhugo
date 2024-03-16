@@ -15,13 +15,13 @@ import (
 	"text/template"
 	"time"
 
+	sql "github.com/jmoiron/sqlx"
 	"github.com/joho/godotenv"
 	"github.com/kelseyhightower/envconfig"
-	log "github.com/sirupsen/logrus"
-
-	sql "github.com/jmoiron/sqlx"
-
 	_ "github.com/mattn/go-sqlite3"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 type config struct {
@@ -272,7 +272,7 @@ func copyImagesToHugo(db *sql.DB, cfg *config, n *note, hugo_path string) {
 	}
 }
 
-func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) {
+func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) error {
 
 	hash_tagline := cfg.TagLine
 	current_tagline := hash_tagline
@@ -290,13 +290,15 @@ func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) {
 
 	if hash_tagline < 0 {
 		// Remove the empty lines from the end
-		for len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
-			lines = lines[0:len(lines)]
+		last := len(lines) - 1
+		for last > 0 && len(lines[last]) == 0 {
+			last--
 		}
+		lines = lines[0 : last+1]
 
 		current_tagline = len(lines) + hash_tagline
 		if current_tagline < 0 || current_tagline >= len(lines) {
-			return
+			return nil
 		}
 	}
 
@@ -320,8 +322,7 @@ func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) {
 
 	post_dir := fmt.Sprintf("%s/%s/%s", cfg.HugoDir, cfg.ContentDir, target)
 	if err := os.MkdirAll(post_dir, os.ModePerm); err != nil {
-		log.Error(err)
-		return
+		return err
 	}
 
 	copyImagesToHugo(db, cfg, n, post_dir)
@@ -329,8 +330,7 @@ func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) {
 	cf, err := ioutil.ReadFile(fp)
 	existed := err == nil
 	if err != nil && !os.IsNotExist(err) {
-		log.Error(err)
-		return
+		return err
 	}
 	// If the file exists, check for any custom front matter to preserve it.
 	if len(cf) > 0 {
@@ -341,8 +341,7 @@ func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) {
 
 	f, err := os.Create(fp_temp)
 	if err != nil {
-		log.Error(err)
-		return
+		return err
 	}
 
 	if err := tmpl.Execute(f, n); err != nil {
@@ -358,14 +357,13 @@ func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) {
 		if bytes.Equal(cf, cf2) {
 			log.Info("Files are same, skipping update")
 			os.Remove(fp_temp)
-			return
+			return nil
 		}
 		log.Info("Files differed, updating")
 	} else {
 		log.Info("Files did not exist, updating")
 	}
-	os.Rename(fp_temp, fp)
-
+	return os.Rename(fp_temp, fp)
 }
 
 func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan note, cfg *config, tmpl *template.Template) {
@@ -375,7 +373,10 @@ func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan n
 	for {
 		select {
 		case n := <-notes:
-			updateHugoNote(db, cfg, tmpl, &n)
+			err := updateHugoNote(db, cfg, tmpl, &n)
+			if err != nil {
+				log.Error(err)
+			}
 		default:
 			// we want to empty the notes channel and only
 			// then consider done; this facilitates easier
@@ -384,8 +385,10 @@ func updateHugo(db *sql.DB, wg *sync.WaitGroup, done <-chan bool, notes <-chan n
 			// problems)
 			select {
 			case n := <-notes:
-				updateHugoNote(db, cfg, tmpl, &n)
-
+				err := updateHugoNote(db, cfg, tmpl, &n)
+				if err != nil {
+					log.Error(err)
+				}
 			case <-done:
 				log.Debug("Update Hugo exiting")
 				return
@@ -486,6 +489,10 @@ func customFrontMatter(f []byte) []string {
 	return []string{}
 }
 
+var titleCaser = cases.Title(language.English)
+
 func formatTag(l []byte, tag string) string {
-	return strings.Title(strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace((string(l))), "#"), tag+"/"))
+	realtag := strings.TrimSuffix(
+		strings.TrimSpace(string(l)), "#")
+	return titleCaser.String(strings.TrimPrefix(realtag, tag+"/"))
 }

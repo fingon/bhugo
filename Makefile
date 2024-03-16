@@ -9,7 +9,12 @@ BINARY=bhugo
 TEMPLATES = $(wildcard *.templ)
 GENERATED = $(patsubst %.templ,%_templ.go,$(TEMPLATES))
 
+all: build lint
+
 build: $(BINARY)
+
+lint:
+	golangci-lint run
 
 $(BINARY): $(wildcard */*.go) $(wildcard *.go) $(GENERATED) Makefile
 	go test ./...
