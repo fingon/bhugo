@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"sync"
 	"testing"
@@ -91,14 +90,14 @@ Updated text`),
 			dir := fmt.Sprintf("%s/%s/%s", cfg.HugoDir, cfg.ContentDir, test.file)
 
 			// Keep a copy of the original file if it exists.
-			orig, _ := ioutil.ReadFile(dir)
+			orig, _ := os.ReadFile(dir)
 
 			defer func() {
 				if test.cleanup {
 					err = os.Remove(dir)
 					require.NoError(t, err)
 				} else {
-					err := ioutil.WriteFile(dir, orig, 0o666)
+					err := os.WriteFile(dir, orig, 0o666)
 					require.NoError(t, err)
 				}
 			}()
@@ -108,7 +107,7 @@ Updated text`),
 
 			updateHugo(nil, &wg, done, notes, &cfg, tmpl)
 
-			f, err := ioutil.ReadFile(dir)
+			f, err := os.ReadFile(dir)
 			require.NoError(t, err)
 			// TODO: If someone in US really wants to toy
 			// with this, the Core Data epoch might roll to

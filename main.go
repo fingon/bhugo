@@ -5,7 +5,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/signal"
 	"path"
@@ -245,13 +244,13 @@ func fileExists(path string) bool {
 
 func copyFile(src, dst string) {
 	// TODO: Do we care about permissions? Probably not
-	srcdata, err := ioutil.ReadFile(src)
+	srcdata, err := os.ReadFile(src)
 	if err != nil {
 		log.Error(err)
 		return
 	}
 	if fileExists(dst) {
-		dstdata, err := ioutil.ReadFile(src)
+		dstdata, err := os.ReadFile(src)
 		if err != nil {
 			log.Error(err)
 			return
@@ -261,7 +260,7 @@ func copyFile(src, dst string) {
 		}
 	}
 	log.Infof("Copying %s to %s", src, dst)
-	err = ioutil.WriteFile(dst, srcdata, 0o644)
+	err = os.WriteFile(dst, srcdata, 0o644)
 	if err != nil {
 		log.Error(err)
 	}
@@ -345,7 +344,7 @@ func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) e
 
 	copyImagesToHugo(db, cfg, n, postDir)
 	fp := postDir + "/index.md"
-	cf, err := ioutil.ReadFile(fp)
+	cf, err := os.ReadFile(fp)
 	existed := err == nil
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -370,8 +369,8 @@ func updateHugoNote(db *sql.DB, cfg *config, tmpl *template.Template, n *note) e
 		log.Error(err)
 	}
 	if existed {
-		cf, _ := ioutil.ReadFile(fp)
-		cf2, _ := ioutil.ReadFile(fpTemp)
+		cf, _ := os.ReadFile(fp)
+		cf2, _ := os.ReadFile(fpTemp)
 		if bytes.Equal(cf, cf2) {
 			log.Info("Files are same, skipping update")
 			os.Remove(fpTemp)
