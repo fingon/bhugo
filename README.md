@@ -69,7 +69,7 @@ Hugo tags in the front matter.
 
 `TAG_LINE` can be used with either 1 (second line), or -1 (last line), or
 anything else you want where the hashtags are placed in the
-entries. Dynamic finding of tags is not supported. 
+entries. Dynamic finding of tags is not supported.
 
 `TIME_FORMAT` can be used to customize time format used when dumping entries.
 
