@@ -96,7 +96,8 @@ var bhugoFrontMatter = map[string]bool{
 
 func run(
 	_ context.Context,
-	args []string) error {
+	args []string,
+) error {
 	log.Info("Bhugo Initializing")
 
 	err := godotenv.Load(".bhugo")
@@ -260,7 +261,7 @@ func copyFile(src, dst string) {
 		}
 	}
 	log.Infof("Copying %s to %s", src, dst)
-	err = ioutil.WriteFile(dst, srcdata, 0644)
+	err = ioutil.WriteFile(dst, srcdata, 0o644)
 	if err != nil {
 		log.Error(err)
 	}

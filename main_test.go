@@ -27,7 +27,8 @@ func TestUpdateHugo(t *testing.T) {
 				BodyRaw: []byte(`# Note Title
 #blog/tag
 
-Body text`)},
+Body text`),
+			},
 			[]byte(`---
 title: "Note Title"
 date: 2001-01-01
@@ -48,7 +49,8 @@ Body text`),
 				BodyRaw: []byte(`# Existing
 #blog/tag
 
-Updated text`)},
+Updated text`),
+			},
 			[]byte(`---
 title: "Existing"
 date: 2001-01-01
@@ -96,7 +98,7 @@ Updated text`),
 					err = os.Remove(dir)
 					require.NoError(t, err)
 				} else {
-					err := ioutil.WriteFile(dir, orig, 0666)
+					err := ioutil.WriteFile(dir, orig, 0o666)
 					require.NoError(t, err)
 				}
 			}()
