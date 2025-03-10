@@ -1,6 +1,7 @@
 module github.com/fingon/bhugo
 
 go 1.21
+toolchain go1.23.7
 
 require (
 	github.com/jmoiron/sqlx v1.4.0
@@ -9,7 +10,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.10.0
-	golang.org/x/text v0.22.0
+	golang.org/x/text v0.23.0
 )
 
 require (
